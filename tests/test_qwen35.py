@@ -11,6 +11,7 @@ with the hybrid Gated DeltaNet + full attention layer layout.
 
 from contextlib import suppress
 
+import pytest
 import torch
 from peft import LoraConfig, get_peft_model
 from torch import Tensor
@@ -19,7 +20,8 @@ from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForCausalLM
 
 
-def make_tiny_qwen35() -> tuple[Qwen3_5ForCausalLM, Qwen3_5TextConfig]:
+@pytest.fixture(scope="module")
+def tiny_qwen35() -> tuple[Qwen3_5ForCausalLM, Qwen3_5TextConfig]:
     """Create a minimal Qwen3.5 model for testing (< 1MB)."""
     config = Qwen3_5TextConfig(
         hidden_size=64,
@@ -71,18 +73,18 @@ def get_layer_modules(layer: Module) -> dict[str, list[Module]]:
     return modules
 
 
-def test_layer_types():
+def test_layer_types(tiny_qwen35):
     """Verify the 3:1 hybrid attention layout."""
-    model, config = make_tiny_qwen35()
+    model, config = tiny_qwen35
     assert config.layer_types == [
         "linear_attention", "linear_attention", "linear_attention", "full_attention",
         "linear_attention", "linear_attention", "linear_attention", "full_attention",
     ]
 
 
-def test_linear_attention_layers():
+def test_linear_attention_layers(tiny_qwen35):
     """Linear attention layers should have linear_attn.out_proj and mlp.down_proj."""
-    model, config = make_tiny_qwen35()
+    model, config = tiny_qwen35
     layers = model.model.layers
 
     for i, layer in enumerate(layers):
@@ -94,9 +96,9 @@ def test_linear_attention_layers():
         assert "attn.o_proj" not in mods, f"Layer {i}: unexpected attn.o_proj"
 
 
-def test_full_attention_layers():
+def test_full_attention_layers(tiny_qwen35):
     """Full attention layers should have self_attn.o_proj and mlp.down_proj."""
-    model, config = make_tiny_qwen35()
+    model, config = tiny_qwen35
     layers = model.model.layers
 
     for i, layer in enumerate(layers):
@@ -108,9 +110,9 @@ def test_full_attention_layers():
         assert "attn.out_proj" not in mods, f"Layer {i}: unexpected attn.out_proj"
 
 
-def test_abliterable_components_union():
+def test_abliterable_components_union(tiny_qwen35):
     """get_abliterable_components must return the union across all layer types."""
-    model, _ = make_tiny_qwen35()
+    model, _ = tiny_qwen35
     layers = model.model.layers
 
     # Replicate heretic's get_abliterable_components (fixed version).
@@ -125,9 +127,9 @@ def test_abliterable_components_union():
     assert "mlp.down_proj" in component_list, "Missing mlp.down_proj"
 
 
-def test_lora_targets():
+def test_lora_targets(tiny_qwen35):
     """LoRA target modules should include both o_proj and out_proj."""
-    model, _ = make_tiny_qwen35()
+    model, _ = tiny_qwen35
     layers = model.model.layers
 
     # Replicate component discovery.
@@ -142,9 +144,9 @@ def test_lora_targets():
     assert "down_proj" in target_modules, "LoRA targets missing down_proj"
 
 
-def test_lora_adapter_attachment():
+def test_lora_adapter_attachment(tiny_qwen35):
     """LoRA adapters should attach successfully to both attention types."""
-    model, _ = make_tiny_qwen35()
+    model, _ = tiny_qwen35
 
     target_modules = ["o_proj", "out_proj", "down_proj"]
     peft_config = LoraConfig(
@@ -165,9 +167,9 @@ def test_lora_adapter_attachment():
     assert len(lora_modules) > 0, "No LoRA modules found"
 
 
-def test_abliteration_parameters_no_keyerror():
+def test_abliteration_parameters_no_keyerror(tiny_qwen35):
     """Abliteration loop should not KeyError on hybrid layers."""
-    model, _ = make_tiny_qwen35()
+    model, _ = tiny_qwen35
     layers = model.model.layers
 
     # Build component union (like fixed get_abliterable_components).
@@ -185,22 +187,3 @@ def test_abliteration_parameters_no_keyerror():
             assert component in parameters, (
                 f"Layer {layer_index}: component '{component}' not in parameters"
             )
-
-
-if __name__ == "__main__":
-    tests = [
-        test_layer_types,
-        test_linear_attention_layers,
-        test_full_attention_layers,
-        test_abliterable_components_union,
-        test_lora_targets,
-        test_lora_adapter_attachment,
-        test_abliteration_parameters_no_keyerror,
-    ]
-
-    for test in tests:
-        print(f"  {test.__name__}... ", end="")
-        test()
-        print("ok")
-
-    print(f"\nAll {len(tests)} tests passed!")
