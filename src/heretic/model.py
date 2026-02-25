@@ -151,10 +151,8 @@ class Model:
 
         print(f"* Transformer model with [bold]{len(self.get_layers())}[/] layers")
         print("* Abliterable components:")
-        for component, modules in self.get_layer_modules(0).items():
-            print(
-                f"  * [bold]{component}[/]: [bold]{len(modules)}[/] modules per layer"
-            )
+        for component in self.get_abliterable_components():
+            print(f"  * [bold]{component}[/]")
 
     def _apply_lora(self):
         # Guard against calling this method at the wrong time.
@@ -379,7 +377,14 @@ class Model:
         return modules
 
     def get_abliterable_components(self) -> list[str]:
-        return list(self.get_layer_modules(0).keys())
+        # Use dict to preserve insertion order while deduplicating.
+        # Check all layers to catch hybrid architectures (e.g. Qwen3.5)
+        # where different layers have different attention types.
+        components: dict[str, None] = {}
+        for layer_index in range(len(self.get_layers())):
+            for component in self.get_layer_modules(layer_index):
+                components[component] = None
+        return list(components)
 
     def abliterate(
         self,

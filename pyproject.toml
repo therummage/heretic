@@ -38,6 +38,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+linear-attention = [
+    "causal-conv1d~=1.6",
+    "flash-linear-attention~=0.4",
+]
 research = [
     "geom-median~=0.1",
     "imageio~=2.37",
