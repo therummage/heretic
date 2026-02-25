@@ -414,7 +414,14 @@ class Model:
         with suppress(Exception):
             try_add("mlp.down_proj", layer.mlp.down_proj)  # ty:ignore[possibly-missing-attribute]
 
-        # Some MoE models (e.g. Qwen3).
+        # MoE models with shared experts (e.g. Qwen3.5 MoE).
+        # The shared expert is a dense MLP that processes every token and has a
+        # standard nn.Linear down_proj.  Routed experts use packed 3D parameter
+        # tensors that are incompatible with LoRA, so we target the shared expert.
+        with suppress(Exception):
+            try_add("mlp.down_proj", layer.mlp.shared_expert.down_proj)  # ty:ignore[possibly-missing-attribute]
+
+        # MoE models with iterable expert modules.
         with suppress(Exception):
             for expert in layer.mlp.experts:  # ty:ignore[possibly-missing-attribute, not-iterable]
                 try_add("mlp.down_proj", expert.down_proj)  # ty:ignore[possibly-missing-attribute]
