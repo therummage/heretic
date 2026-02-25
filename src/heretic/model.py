@@ -188,10 +188,12 @@ class Model:
         # This may cause LoRA adapters to be attached to unrelated modules (e.g. "conv.o_proj"),
         # but this is harmless as we only abliterate the modules we target in `abliterate()`,
         # leaving the others at their default (identity) state.
-        # NOTE: This will need to be updated when hybrid layer support (#43) is merged.
-        target_modules = [
-            comp.split(".")[-1] for comp in self.get_abliterable_components()
-        ]
+        # Component names may include qualifiers (e.g. "mlp.down_proj[full_attention]"),
+        # so we strip those before extracting the leaf module name.
+        target_modules = list(dict.fromkeys(
+            comp.split("[")[0].split(".")[-1]
+            for comp in self.get_abliterable_components()
+        ))
 
         if self.settings.row_normalization != RowNormalization.FULL:
             # Rank 1 is sufficient for directional ablation without renormalization.
@@ -443,6 +445,17 @@ class Model:
         # We need at least one module across all components for abliteration to work.
         total_modules = sum(len(mods) for mods in modules.values())
         assert total_modules > 0, "No abliterable modules found in layer"
+
+        # When split_mlp_by_attention_type is enabled and the layer declares a
+        # layer_type (e.g. "full_attention" or "linear_attention"), qualify the
+        # MLP component names so the optimizer can learn separate parameters for
+        # each attention context.  Layers without a layer_type are left as-is.
+        layer_type = getattr(layer, "layer_type", None)
+        if self.settings.split_mlp_by_attention_type and layer_type is not None:
+            modules = {
+                (f"{k}[{layer_type}]" if k.startswith("mlp.") else k): v
+                for k, v in modules.items()
+            }
 
         return modules
 

@@ -184,6 +184,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    split_mlp_by_attention_type: bool = Field(
+        default=False,
+        description=(
+            "Whether to optimize MLP abliteration parameters separately for different "
+            "attention layer types (e.g. full attention vs. linear attention in hybrid models). "
+            "This gives the optimizer independent weight curves for each layer type, "
+            "which may improve precision on hybrid architectures like Qwen3.5."
+        ),
+    )
+
     row_normalization: RowNormalization = Field(
         default=RowNormalization.NONE,
         description=(
