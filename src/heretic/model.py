@@ -90,6 +90,8 @@ class Model:
         if self.settings.evaluate_model is not None:
             self.trusted_models[settings.evaluate_model] = settings.trust_remote_code
 
+        self.attn_implementation = self._resolve_attn_implementation()
+
         for dtype in settings.dtypes:
             print(f"* Trying dtype [bold]{dtype}[/]... ", end="")
 
@@ -101,15 +103,38 @@ class Model:
                 # (some models like gpt-oss have issues with explicit None).
                 if quantization_config is not None:
                     extra_kwargs["quantization_config"] = quantization_config
+                if self.attn_implementation is not None:
+                    extra_kwargs["attn_implementation"] = self.attn_implementation
 
-                self.model = get_model_class(settings.model).from_pretrained(
-                    settings.model,
-                    dtype=dtype,
-                    device_map=settings.device_map,
-                    max_memory=self.max_memory,
-                    trust_remote_code=self.trusted_models.get(settings.model),
-                    **extra_kwargs,
-                )
+                try:
+                    self.model = get_model_class(settings.model).from_pretrained(
+                        settings.model,
+                        dtype=dtype,
+                        device_map=settings.device_map,
+                        max_memory=self.max_memory,
+                        trust_remote_code=self.trusted_models.get(settings.model),
+                        **extra_kwargs,
+                    )
+                except Exception:
+                    if self.attn_implementation is not None:
+                        # Flash Attention failed; fall back to default attention.
+                        print(
+                            f"[yellow]Flash Attention failed, "
+                            f"falling back to default attention[/]... ",
+                            end="",
+                        )
+                        self.attn_implementation = None
+                        extra_kwargs.pop("attn_implementation", None)
+                        self.model = get_model_class(settings.model).from_pretrained(
+                            settings.model,
+                            dtype=dtype,
+                            device_map=settings.device_map,
+                            max_memory=self.max_memory,
+                            trust_remote_code=self.trusted_models.get(settings.model),
+                            **extra_kwargs,
+                        )
+                    else:
+                        raise
 
                 # If we reach this point and the model requires trust_remote_code,
                 # either the user accepted, or settings.trust_remote_code is True.
@@ -217,6 +242,42 @@ class Model:
             )
         return None
 
+    @staticmethod
+    def _resolve_attn_implementation() -> str | None:
+        """Determine the best available attention implementation."""
+        if not torch.cuda.is_available():
+            return None
+
+        major, _ = torch.cuda.get_device_capability()
+        if major < 8:
+            print(
+                f"[yellow]* Flash Attention 2 not available "
+                f"(GPU compute capability {major}.x < 8.0)[/]"
+            )
+            return None
+
+        try:
+            import flash_attn  # noqa: F401
+
+            print("* Flash Attention 2 available (flash-attn)")
+            return "flash_attention_2"
+        except ImportError:
+            pass
+
+        try:
+            import kernels  # noqa: F401
+
+            print("* Flash Attention 2 available (kernels)")
+            return "flash_attention_2"
+        except ImportError:
+            pass
+
+        print(
+            "[yellow]* Flash Attention 2 not available "
+            "(install flash-attn or kernels for faster inference)[/]"
+        )
+        return None
+
     def get_merged_model(self) -> PreTrainedModel:
         # Guard against calling this method at the wrong time.
         assert isinstance(self.model, PeftModel)
@@ -293,6 +354,8 @@ class Model:
         extra_kwargs = {}
         if quantization_config is not None:
             extra_kwargs["quantization_config"] = quantization_config
+        if self.attn_implementation is not None:
+            extra_kwargs["attn_implementation"] = self.attn_implementation
 
         self.model = get_model_class(self.settings.model).from_pretrained(
             self.settings.model,
